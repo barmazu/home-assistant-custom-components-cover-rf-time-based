@@ -146,7 +146,7 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
         else:
             self._open = 0
             self._closed = 100
-        self._target_position = self._open
+        self._target_position = self._closed
         self._processing_known_position = False
 
         if name:
