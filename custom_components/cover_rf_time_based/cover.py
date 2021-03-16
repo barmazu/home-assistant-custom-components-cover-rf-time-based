@@ -164,7 +164,11 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
         old_state = await self.async_get_last_state()
         _LOGGER.debug(self._name + ': ' + 'async_added_to_hass :: oldState %s', old_state)
         if (old_state is not None and self.tc is not None and old_state.attributes.get(ATTR_CURRENT_POSITION) is not None):
-            self.tc.set_position(int(old_state.attributes.get(ATTR_CURRENT_POSITION)))
+            if self._invert_knx_open_close:
+                last_state = 100 - int(old_state.attributes.get(ATTR_CURRENT_POSITION))
+            else:
+                last_state = int(old_state.attributes.get(ATTR_CURRENT_POSITION))
+            self.tc.set_position(last_state)
         if (old_state is not None and old_state.attributes.get(ATTR_UNCONFIRMED_STATE) is not None):
          if type(old_state.attributes.get(ATTR_UNCONFIRMED_STATE)) == bool:
            self._assume_uncertain_position = old_state.attributes.get(ATTR_UNCONFIRMED_STATE)
@@ -275,8 +279,6 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
                 command = SERVICE_CLOSE_COVER
             elif position > current_position:
                 command = SERVICE_OPEN_COVER
-            # Invert position for tc.start_travel() below
-            position = 100 - position
         else:
             if position > current_position:
                 command = SERVICE_CLOSE_COVER
@@ -284,6 +286,9 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
                 command = SERVICE_OPEN_COVER
 
         if command is not None:
+            # Invert position for tc.start_travel() below
+            if self._invert_knx_open_close:
+                position = 100 - position
             self.start_auto_updater()
             self.tc.start_travel(position)
             _LOGGER.debug(self._name + ': ' + 'set_position :: command %s', command)
