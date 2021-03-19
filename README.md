@@ -45,37 +45,78 @@ Optional settings:
 
 
 ### Example scripts.yaml entry
-The following example assumes that you're using an [MQTT-RF bridge running Tasmota](https://tasmota.github.io/docs/devices/Sonoff-RF-Bridge-433/) open source firmware to integrate your radio-controlled covers:
+#### RF covers
+The following example assumes that you're using an [MQTT-RF bridge running Tasmota](https://tasmota.github.io/docs/devices/Sonoff-RF-Bridge-433/) open source firmware to integrate your radio-controlled covers. The command scripts pass the `rfraw_data` parameter to a general transmitter script which takes care of queuing the transmission of the codes and keeping an appropriate delay between them:
 ```yaml
+'rf_transmitter':
+  alias: 'RF Transmitter'
+  mode: queued
+  max: 30
+  sequence:
+    - service: mqtt.publish
+      data:
+        topic: 'cmnd/rf-bridge-1/rfraw'
+        payload: '{{ rfraw_data }}'
+    - delay: 00:00:01
+
 'rf_myroom_cover_down':
   alias: 'RF send MyRoom Cover DOWN'
+  mode: single
+  max_exceeded: silent
   sequence:
-  - service: mqtt.publish
-    data:
-      topic: 'cmnd/rf-bridge-1/backlog'
-      payload: 'rfraw XXXXXXXXX....XXXXXXXXXX;rfraw 0'
+    - service: script.turn_on
+      target:
+        entity_id: script.rf_transmitter
+      data:
+        variables:
+          rfraw_data: 'AAB0XXXXX....XXXXXXXXXX'
 
 'rf_myroom_cover_stop':
   alias: 'RF send MyRoom Cover STOP'
+  mode: single
+  max_exceeded: silent
   sequence:
-  - service: mqtt.publish
-    data:
-      topic: 'cmnd/rf-bridge-1/backlog'
-      payload: 'rfraw XXXXXXXXX....XXXXXXXXXX;rfraw 0'
+    - service: script.turn_on
+      target:
+        entity_id: script.rf_transmitter
+      data:
+        variables:
+          rfraw_data: 'AAB0XXXXX....XXXXXXXXXX'
 
  'rf_myroom_cover_up':
   alias: 'RF send MyRoom Cover UP'
+  mode: single
+  max_exceeded: silent
   sequence:
-  - service: mqtt.publish
-    data:
-      topic: 'cmnd/rf-bridge-1/backlog'
-      payload: 'rfraw XXXXXXXXX....XXXXXXXXXX;rfraw 0'
+    - service: script.turn_on
+      target:
+        entity_id: script.rf_transmitter
+      data:
+        variables:
+          rfraw_data: 'AAB0XXXXX....XXXXXXXXXX'
 ```
 
+For the scripts above you need a small automation in **automations.yaml** to set `RfRaw` back to `0` in Tasmota to avoid spamming your MQTT server with loads of sniffed raw RF data. This trigger is checked every minute only so set `> 40` set in the `value_template` to be a bit bigger than your biggest `travelling_time`:
+
+```yaml
+- id: rf_transmitter_cancel_sniff
+  alias: 'RF Transmitter cancel sniffing'
+  trigger:
+    platform: template
+    value_template: "{{ ( as_timestamp(now()) - as_timestamp(state_attr('script.rf_transmitter', 'last_triggered')) | int(0) ) > 40 }}"
+  action:
+    - service: mqtt.publish
+      data:
+        topic: 'cmnd/rf-bridge-1/rfraw'
+        payload: '0'
+```
+#### Switched covers
 The example below assumes you've set `send_stop_at_ends: True` in the cover config, and you're using any [two-gang switch running Tasmota](https://tasmota.github.io/docs/devices/Sonoff-Dual-R2/) open source firmware to integrate your switch-controlled covers:
 ```yaml
 'rf_myroom_cover_down':
   alias: 'Switches send MyRoom Cover DOWN'
+  mode: single
+  max_exceeded: silent
   sequence:
     - service: mqtt.publish
       data:
@@ -88,6 +129,8 @@ The example below assumes you've set `send_stop_at_ends: True` in the cover conf
 
 'rf_myroom_cover_stop':
   alias: 'Switches send MyRoom Cover STOP'
+  mode: single
+  max_exceeded: silent
   sequence:
     - service: mqtt.publish
       data:
@@ -100,6 +143,8 @@ The example below assumes you've set `send_stop_at_ends: True` in the cover conf
 
 'rf_myroom_cover_up':
   alias: 'Switches send MyRoom Cover UP'
+  mode: single
+  max_exceeded: silent
   sequence:
     - service: mqtt.publish
       data:
@@ -110,10 +155,10 @@ The example below assumes you've set `send_stop_at_ends: True` in the cover conf
         topic: 'cmnd/myroomcoverswitch/POWER2' # power
         payload: 'ON'
 ```
-(Credits to [VDRainer](https://github.com/VDRainer) for the code. Note how you don't have to configure these as switches in Home Assistant at all, it's enough just to publish MQTT commands strainght from the script.)
+Note how you don't have to configure these as switches in Home Assistant at all, it's enough just to publish MQTT commands strainght from the script (credits to [VDRainer](https://github.com/VDRainer) for this example).
 Of course you can customize based on what ever other way to trigger these 3 type of movements. You could, for example, turn on and off warning lights along with the movement.
 
-### Services to set position or action without triggering cover movement.
+### Services to set position or action without triggering cover movement
 
 This component provides 2 services:
 
@@ -134,7 +179,6 @@ Following examples to help explain parameters and use cases:
 ```yaml
 - id: 'garage_closed'
   alias: 'Doors: garage set closed when contact'
-  description: ''
   trigger:
   - entity_id: binary_sensor.door_garage_cover
     platform: state
@@ -158,7 +202,6 @@ We have set ```confident``` to ```true``` as the sensor has confirmed a final po
 ```yaml
 - id: 'rf_cover_opening'
   alias: 'RF_Cover: set opening when rf received'
-  description: ''
   trigger:
   - entity_id: sensor.rf_command
     platform: state
@@ -185,7 +228,6 @@ Example:
 ```yaml
 - id: 'rf_cover_stop'
   alias: 'RF_Cover: set stop action from bridge trigger'
-  description: ''
   trigger:
   - entity_id: sensor.rf_command
     platform: state
@@ -213,13 +255,19 @@ homeassistant:
 ```
 More details in [Home Assistant device class docs](https://www.home-assistant.io/docs/configuration/customizing-devices/#device-class).
 
-### Some tips when using this component with Tasmota RF bridge in automations
+### Some tips when using this component with Tasmota RF Bridge in automations
 Since there's no feedback from the cover about its current state, state is assumed based on the last command sent, and position is calculated based on the fraction of time spent travelling up or down. You need to measure time by opening/closing the cover using the original remote controller, not through the commands sent from Home Assistant (as they may introduce some delay).
 
-Tasmota is able to send out the radio-frequency commands very quickly. If some of your covers 'miss' the commands occassionally (you can see that from the fact that the state shown in Home Assistant does not correspond to reality), it may be that those cover motors do not understand the codes when they are sent 'at once' from Home Assistant. They are sent very quickly one after another and Tasmota can cope with that, however this can be too much for the motors themselves.
-To prevent that, make sure you **don't use** [cover groups](https://www.home-assistant.io/integrations/cover.group/) containing multiple covers provided by this integration, and also in automation **don't include multipe covers separated by commas** in one service call. You should create separate service calls for each cover, moreover, add 1 second delay between them:
+Tasmota RF bridge is able to send out the radio-frequency commands very quickly. If some of your covers 'miss' the commands occassionally (you can see that from the fact that the state shown in Home Assistant does not correspond to reality), it may be that those cover motors do not understand the codes when they are sent 'at once' from Home Assistant. 
+
+This can be handled in multiple ways:
+- avoid _backlogs_ with `rfraw AAB0XXXXX....XXXXXXXXXX; rfraw 0` if you need multiple covers opening and closing at once. Switching the sniff on and off quickly for every cover movement may cause issues. It's enough to send `rfraw 0` only once with some delay after all procedures related to cover movements finished, the example scripts above take care of that.
+- if you are sending `0xB0` codes (decoded with [BitBucketConverter.py](https://github.com/Portisch/RF-Bridge-EFM8BB1)) you can tweak those to be sent with repetitions (multiple times) by changing the repetition parameter (5th byte) of the code. [For example](https://github.com/arendst/Tasmota/issues/5936#issuecomment-500236581) 20 repetitions can be achieved by changing 5th byte from 04 to 14. Also BitBucketConverter can be run by specifiying the required repetitions at command line before decoding.
+- alternatively, you can further reduce stress by making sure you don't use [cover groups](https://www.home-assistant.io/integrations/cover.group/) containing multiple covers provided by this integration, and also in automation don't include multipe covers separated by commas in one service call. You could create separate service calls for each cover, moreover, add more delay between them:
 ```yaml
 - alias: 'Covers down when getting dark'
+  mode: single
+  max_exceeded: silent
   trigger:
     - platform: numeric_state
       below: 400
@@ -228,10 +276,10 @@ To prevent that, make sure you **don't use** [cover groups](https://www.home-ass
   action:
     - service: cover.close_cover
       entity_id: cover.room_1
-    - delay: '00:00:01'
+    - delay: '00:{{ (range(1,10)|random|int) }}:00'
     - service: cover.close_cover
       entity_id: cover.room_2
-    - delay: '00:00:01'
+    - delay: '00:00:02'
     - service: cover.set_cover_position
       data:
         entity_id: cover.room_3

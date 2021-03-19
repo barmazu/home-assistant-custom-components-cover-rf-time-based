@@ -330,7 +330,7 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
         """We want to do a few things when we get a position"""
         action = kwargs[ATTR_ACTION]
         if action not in ["open","close","stop"]:
-          raise ValueError("action must be one of open, close or stop.")
+          raise ValueError("action must be one of open, close or cover.")
         if action == "stop":
           self._handle_my_button()
           return
