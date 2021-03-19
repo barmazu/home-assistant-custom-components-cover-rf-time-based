@@ -33,14 +33,8 @@ CONF_ALIASES = 'aliases'
 CONF_TRAVELLING_TIME_DOWN = 'travelling_time_down'
 CONF_TRAVELLING_TIME_UP = 'travelling_time_up'
 CONF_SEND_STOP_AT_ENDS = 'send_stop_at_ends'
-CONF_INVERT_KNX_OPEN_CLOSE = 'invert_knx_open_close'
 DEFAULT_TRAVEL_TIME = 25
 DEFAULT_SEND_STOP_AT_ENDS = False
-#
-# HA : 0 - closed, 100 - open
-# KNX: 0 - open,   100 - closed
-#
-DEFAULT_INVERT_KNX_OPEN_CLOSE = True
 
 CONF_OPEN_SCRIPT_ENTITY_ID = 'open_script_entity_id'
 CONF_CLOSE_SCRIPT_ENTITY_ID = 'close_script_entity_id'
@@ -68,7 +62,6 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
                     vol.Optional(CONF_TRAVELLING_TIME_DOWN, default=DEFAULT_TRAVEL_TIME): cv.positive_int,
                     vol.Optional(CONF_TRAVELLING_TIME_UP, default=DEFAULT_TRAVEL_TIME): cv.positive_int,
                     vol.Optional(CONF_SEND_STOP_AT_ENDS, default=DEFAULT_SEND_STOP_AT_ENDS): cv.boolean,
-                    vol.Optional(CONF_INVERT_KNX_OPEN_CLOSE, default=DEFAULT_INVERT_KNX_OPEN_CLOSE): cv.boolean,
                 }
             }
         ),
@@ -106,8 +99,7 @@ def devices_from_config(domain_config):
         close_script_entity_id = config.pop(CONF_CLOSE_SCRIPT_ENTITY_ID)
         stop_script_entity_id = config.pop(CONF_STOP_SCRIPT_ENTITY_ID)
         send_stop_at_ends = config.pop(CONF_SEND_STOP_AT_ENDS)
-        invert_knx_open_close = config.pop(CONF_INVERT_KNX_OPEN_CLOSE)
-        device = CoverTimeBased(device_id, name, travel_time_down, travel_time_up, open_script_entity_id, close_script_entity_id, stop_script_entity_id, send_stop_at_ends, invert_knx_open_close)
+        device = CoverTimeBased(device_id, name, travel_time_down, travel_time_up, open_script_entity_id, close_script_entity_id, stop_script_entity_id, send_stop_at_ends)
         devices.append(device)
     return devices
 
@@ -129,7 +121,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
 
 
 class CoverTimeBased(CoverEntity, RestoreEntity):
-    def __init__(self, device_id, name, travel_time_down, travel_time_up, open_script_entity_id, close_script_entity_id, stop_script_entity_id, send_stop_at_ends, invert_knx_open_close):
+    def __init__(self, device_id, name, travel_time_down, travel_time_up, open_script_entity_id, close_script_entity_id, stop_script_entity_id, send_stop_at_ends):
         """Initialize the cover."""
         from xknx.devices import TravelCalculator
         self._travel_time_down = travel_time_down
@@ -138,15 +130,8 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
         self._close_script_entity_id = close_script_entity_id 
         self._stop_script_entity_id = stop_script_entity_id
         self._send_stop_at_ends = send_stop_at_ends
-        self._invert_knx_open_close = invert_knx_open_close
         self._assume_uncertain_position = True 
-        if self._invert_knx_open_close:
-            self._open = 100
-            self._closed = 0
-        else:
-            self._open = 0
-            self._closed = 100
-        self._target_position = self._closed
+        self._target_position = 0
         self._processing_known_position = False
 
         if name:
@@ -164,11 +149,7 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
         old_state = await self.async_get_last_state()
         _LOGGER.debug(self._name + ': ' + 'async_added_to_hass :: oldState %s', old_state)
         if (old_state is not None and self.tc is not None and old_state.attributes.get(ATTR_CURRENT_POSITION) is not None):
-            if self._invert_knx_open_close:
-                last_state = 100 - int(old_state.attributes.get(ATTR_CURRENT_POSITION))
-            else:
-                last_state = int(old_state.attributes.get(ATTR_CURRENT_POSITION))
-            self.tc.set_position(last_state)
+            self.tc.set_position(int(old_state.attributes.get(ATTR_CURRENT_POSITION)))
         if (old_state is not None and old_state.attributes.get(ATTR_UNCONFIRMED_STATE) is not None):
          if type(old_state.attributes.get(ATTR_UNCONFIRMED_STATE)) == bool:
            self._assume_uncertain_position = old_state.attributes.get(ATTR_UNCONFIRMED_STATE)
@@ -207,10 +188,7 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
     @property
     def current_cover_position(self):
         """Return the current position of the cover."""
-        if self._invert_knx_open_close:
-            return 100 - self.tc.current_position() # 0 - closed, 100 - open
-        else:
-            return self.tc.current_position() # 0 - open, 100 - closed
+        return self.tc.current_position()
 
     @property
     def is_opening(self):
@@ -247,7 +225,7 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
         """Turn the device close."""
         _LOGGER.debug(self._name + ': ' + 'async_close_cover')
         self.tc.start_travel_down()
-        self._target_position = self._closed
+        self._target_position = 0
 
         self.start_auto_updater()
         await self._async_handle_command(SERVICE_CLOSE_COVER)
@@ -256,7 +234,7 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
         """Turn the device open."""
         _LOGGER.debug(self._name + ': ' + 'async_open_cover')
         self.tc.start_travel_up()
-        self._target_position = self._open
+        self._target_position = 100
 
         self.start_auto_updater()
         await self._async_handle_command(SERVICE_OPEN_COVER)
@@ -270,25 +248,15 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
     async def set_position(self, position):
         _LOGGER.debug(self._name + ': ' + 'set_position')
         """Move cover to a designated position."""
-        current_position = self.current_cover_position
+        current_position = self.tc.current_position()
         _LOGGER.debug(self._name + ': ' + 'set_position :: current_position: %d, new_position: %d',
                       current_position, position)
         command = None
-        if self._invert_knx_open_close:
-            if position < current_position:
-                command = SERVICE_CLOSE_COVER
-            elif position > current_position:
-                command = SERVICE_OPEN_COVER
-        else:
-            if position > current_position:
-                command = SERVICE_CLOSE_COVER
-            elif position < current_position:
-                command = SERVICE_OPEN_COVER
-
+        if position < current_position:
+            command = SERVICE_CLOSE_COVER
+        elif position > current_position:
+            command = SERVICE_OPEN_COVER
         if command is not None:
-            # Invert position for tc.start_travel() below
-            if self._invert_knx_open_close:
-                position = 100 - position
             self.start_auto_updater()
             self.tc.start_travel(position)
             _LOGGER.debug(self._name + ': ' + 'set_position :: command %s', command)
@@ -336,10 +304,10 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
           return
         if action == "open":
           self.tc.start_travel_up()
-          self._target_position = self._open
+          self._target_position = 100
         if action == "close":
           self.tc.start_travel_down()
-          self._target_position = self._closed
+          self._target_position = 0
         self.start_auto_updater()
 
     async def set_known_position(self, **kwargs):
@@ -371,7 +339,7 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
 
     async def auto_stop_if_necessary(self):
         """Do auto stop if necessary."""
-        current_position = self.current_cover_position
+        current_position = self.tc.current_position()
         if self.position_reached() and not self._processing_known_position:
             self.tc.stop()
             if (current_position > 0) and (current_position < 100):
