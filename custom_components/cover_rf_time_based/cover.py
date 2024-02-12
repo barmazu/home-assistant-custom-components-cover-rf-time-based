@@ -7,35 +7,44 @@ from datetime import timedelta
 
 from homeassistant.core import callback
 from homeassistant.helpers import entity_platform
-from homeassistant.helpers.event import async_track_utc_time_change, async_track_time_interval
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.components.cover import (
     ATTR_CURRENT_POSITION,
     ATTR_POSITION,
     PLATFORM_SCHEMA,
+    DEVICE_CLASSES_SCHEMA,
     CoverEntity,
 )
 from homeassistant.const import (
     CONF_NAME,
+    CONF_DEVICE_CLASS,
     ATTR_ENTITY_ID,
+    ATTR_DEVICE_CLASS,
     SERVICE_CLOSE_COVER,
     SERVICE_OPEN_COVER,
     SERVICE_STOP_COVER,
+    STATE_UNAVAILABLE,
 )
 
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.restore_state import RestoreEntity
 
+from xknx.devices import TravelCalculator
+from xknx.devices import TravelStatus
+
 _LOGGER = logging.getLogger(__name__)
 
 CONF_DEVICES = 'devices'
-CONF_NAME = 'name'
 CONF_ALIASES = 'aliases'
 CONF_TRAVELLING_TIME_DOWN = 'travelling_time_down'
 CONF_TRAVELLING_TIME_UP = 'travelling_time_up'
 CONF_SEND_STOP_AT_ENDS = 'send_stop_at_ends'
 CONF_INVERT_KNX_OPEN_CLOSE = 'invert_knx_open_close'
+CONF_ALWAYS_CONFIDENT = 'always_confident'
 DEFAULT_TRAVEL_TIME = 25
 DEFAULT_SEND_STOP_AT_ENDS = False
+DEFAULT_ALWAYS_CONFIDENT = False
+DEFAULT_DEVICE_CLASS = 'shutter'
 #
 # HA : 0 - closed, 100 - open
 # KNX: 0 - open,   100 - closed
@@ -45,8 +54,9 @@ DEFAULT_INVERT_KNX_OPEN_CLOSE = True
 CONF_OPEN_SCRIPT_ENTITY_ID = 'open_script_entity_id'
 CONF_CLOSE_SCRIPT_ENTITY_ID = 'close_script_entity_id'
 CONF_STOP_SCRIPT_ENTITY_ID = 'stop_script_entity_id'
+CONF_COVER_ENTITY_ID = 'cover_entity_id'
+CONF_AVAILABILITY_TPL = 'availability_template'
 ATTR_CONFIDENT = 'confident'
-ATTR_POSITION = 'position'
 ATTR_ACTION = 'action'
 ATTR_POSITION_TYPE = 'position_type'
 ATTR_POSITION_TYPE_CURRENT = 'current'
@@ -55,21 +65,39 @@ ATTR_UNCONFIRMED_STATE = 'unconfirmed_state'
 SERVICE_SET_KNOWN_POSITION = 'set_known_position'
 SERVICE_SET_KNOWN_ACTION = 'set_known_action'
 
+BASE_DEVICE_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_NAME): cv.string,
+        vol.Optional(CONF_ALIASES, default=[]): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional(CONF_TRAVELLING_TIME_DOWN, default=DEFAULT_TRAVEL_TIME): cv.positive_int,
+        vol.Optional(CONF_TRAVELLING_TIME_UP, default=DEFAULT_TRAVEL_TIME): cv.positive_int,
+        vol.Optional(CONF_SEND_STOP_AT_ENDS, default=DEFAULT_SEND_STOP_AT_ENDS): cv.boolean,
+        vol.Optional(CONF_ALWAYS_CONFIDENT, default=DEFAULT_ALWAYS_CONFIDENT): cv.boolean,
+        vol.Optional(CONF_INVERT_KNX_OPEN_CLOSE, default=DEFAULT_INVERT_KNX_OPEN_CLOSE): cv.boolean,
+        vol.Optional(CONF_DEVICE_CLASS, default=DEFAULT_DEVICE_CLASS): DEVICE_CLASSES_SCHEMA,
+        vol.Optional(CONF_AVAILABILITY_TPL): cv.template,
+    }
+)
+
+SCRIPT_DEVICE_SCHEMA = BASE_DEVICE_SCHEMA.extend(
+    {
+        vol.Required(CONF_OPEN_SCRIPT_ENTITY_ID): cv.entity_id,
+        vol.Required(CONF_CLOSE_SCRIPT_ENTITY_ID): cv.entity_id,
+        vol.Required(CONF_STOP_SCRIPT_ENTITY_ID): cv.entity_id,
+    }
+)
+
+COVER_DEVICE_SCHEMA = BASE_DEVICE_SCHEMA.extend(
+    {
+        vol.Required(CONF_COVER_ENTITY_ID): cv.entity_id,
+    }
+)
+
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
         vol.Optional(CONF_DEVICES, default={}): vol.Schema(
             {
-                cv.string: {
-                    vol.Required(CONF_NAME): cv.string,
-                    vol.Required(CONF_OPEN_SCRIPT_ENTITY_ID): cv.entity_id,
-                    vol.Required(CONF_CLOSE_SCRIPT_ENTITY_ID): cv.entity_id,
-                    vol.Required(CONF_STOP_SCRIPT_ENTITY_ID): cv.entity_id,
-                    vol.Optional(CONF_ALIASES, default=[]): vol.All(cv.ensure_list, [cv.string]),
-                    vol.Optional(CONF_TRAVELLING_TIME_DOWN, default=DEFAULT_TRAVEL_TIME): cv.positive_int,
-                    vol.Optional(CONF_TRAVELLING_TIME_UP, default=DEFAULT_TRAVEL_TIME): cv.positive_int,
-                    vol.Optional(CONF_SEND_STOP_AT_ENDS, default=DEFAULT_SEND_STOP_AT_ENDS): cv.boolean,
-                    vol.Optional(CONF_INVERT_KNX_OPEN_CLOSE, default=DEFAULT_INVERT_KNX_OPEN_CLOSE): cv.boolean,
-                }
+                cv.string: vol.Any(SCRIPT_DEVICE_SCHEMA, COVER_DEVICE_SCHEMA)
             }
         ),
     }
@@ -95,6 +123,7 @@ ACTION_SCHEMA = vol.Schema(
 
 DOMAIN = "cover_rf_time_based"
 
+
 def devices_from_config(domain_config):
     """Parse configuration and add cover devices."""
     devices = []
@@ -102,15 +131,30 @@ def devices_from_config(domain_config):
         name = config.pop(CONF_NAME)
         travel_time_down = config.pop(CONF_TRAVELLING_TIME_DOWN)
         travel_time_up = config.pop(CONF_TRAVELLING_TIME_UP)
-        open_script_entity_id = config.pop(CONF_OPEN_SCRIPT_ENTITY_ID)
-        close_script_entity_id = config.pop(CONF_CLOSE_SCRIPT_ENTITY_ID)
-        stop_script_entity_id = config.pop(CONF_STOP_SCRIPT_ENTITY_ID)
+        open_script_entity_id = config.pop(CONF_OPEN_SCRIPT_ENTITY_ID, None)
+        close_script_entity_id = config.pop(CONF_CLOSE_SCRIPT_ENTITY_ID, None)
+        stop_script_entity_id = config.pop(CONF_STOP_SCRIPT_ENTITY_ID, None)
+        cover_entity_id = config.pop(CONF_COVER_ENTITY_ID, None)
         send_stop_at_ends = config.pop(CONF_SEND_STOP_AT_ENDS)
         invert_knx_open_close = config.pop(CONF_INVERT_KNX_OPEN_CLOSE)
-        device = CoverTimeBased(device_id, name, travel_time_down, travel_time_up, open_script_entity_id, close_script_entity_id, stop_script_entity_id, send_stop_at_ends, invert_knx_open_close)
+        always_confident = config.pop(CONF_ALWAYS_CONFIDENT)
+        device_class = config.pop(CONF_DEVICE_CLASS)
+        availability_template = config.pop(CONF_AVAILABILITY_TPL, None)
+        device = CoverTimeBased(device_id, 
+                                name, 
+                                travel_time_down, 
+                                travel_time_up, 
+                                open_script_entity_id, 
+                                close_script_entity_id, 
+                                stop_script_entity_id, 
+                                cover_entity_id, 
+                                send_stop_at_ends, 
+                                invert_knx_open_close,
+                                always_confident, 
+                                device_class, 
+                                availability_template)
         devices.append(device)
     return devices
-
 
 
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
@@ -129,17 +173,32 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
 
 
 class CoverTimeBased(CoverEntity, RestoreEntity):
-    def __init__(self, device_id, name, travel_time_down, travel_time_up, open_script_entity_id, close_script_entity_id, stop_script_entity_id, send_stop_at_ends, invert_knx_open_close):
+    def __init__(self, 
+                 device_id, 
+                 name, 
+                 travel_time_down, 
+                 travel_time_up, 
+                 open_script_entity_id, 
+                 close_script_entity_id, 
+                 stop_script_entity_id, 
+                 cover_entity_id, 
+                 send_stop_at_ends, 
+                 invert_knx_open_close,
+                 always_confident, 
+                 device_class,
+                 availability_template):
         """Initialize the cover."""
-        from xknx.devices import TravelCalculator
         self._travel_time_down = travel_time_down
         self._travel_time_up = travel_time_up
         self._open_script_entity_id = open_script_entity_id
         self._close_script_entity_id = close_script_entity_id 
         self._stop_script_entity_id = stop_script_entity_id
+        self._cover_entity_id = cover_entity_id
         self._send_stop_at_ends = send_stop_at_ends
         self._invert_knx_open_close = invert_knx_open_close
-        self._assume_uncertain_position = True 
+        self._always_confident = always_confident
+        self._device_class = device_class
+        self._assume_uncertain_position = not self._always_confident
         if self._invert_knx_open_close:
             self._open = 100
             self._closed = 0
@@ -148,6 +207,8 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
             self._closed = 100
         self._target_position = self._closed
         self._processing_known_position = False
+        self._unique_id = device_id
+        self._availability_template = availability_template
 
         if name:
             self._name = name
@@ -169,24 +230,33 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
             else:
                 last_state = int(old_state.attributes.get(ATTR_CURRENT_POSITION))
             self.tc.set_position(last_state)
-        if (old_state is not None and old_state.attributes.get(ATTR_UNCONFIRMED_STATE) is not None):
-         if type(old_state.attributes.get(ATTR_UNCONFIRMED_STATE)) == bool:
-           self._assume_uncertain_position = old_state.attributes.get(ATTR_UNCONFIRMED_STATE)
-         else:
-           self._assume_uncertain_position = str(old_state.attributes.get(ATTR_UNCONFIRMED_STATE)) == str(True)
+        if (old_state is not None and old_state.attributes.get(ATTR_UNCONFIRMED_STATE) is not None and not self._always_confident):
+            if type(old_state.attributes.get(ATTR_UNCONFIRMED_STATE)) == bool:
+                self._assume_uncertain_position = old_state.attributes.get(ATTR_UNCONFIRMED_STATE)
+            else:
+                self._assume_uncertain_position = str(old_state.attributes.get(ATTR_UNCONFIRMED_STATE)) == str(True)
 
 
-    def _handle_my_button(self):
-        """Handle the MY button press"""
+    def _handle_stop(self):
+        """Handle stop button press"""
         if self.tc.is_traveling():
-            _LOGGER.debug(self._name + ': ' + '_handle_my_button :: button stops cover')
+            _LOGGER.debug(self._name + ': ' + '_handle_stop :: button stops cover')
             self.tc.stop()
             self.stop_auto_updater()
 
     @property
     def unconfirmed_state(self):
-        """Return the assume state as a string to persist through restarts ."""
+        """Return the assume state as a string to persist through restarts."""
         return str(self._assume_uncertain_position)
+
+    @property
+    def available(self):
+        """Return availability based on external template. Always available if no template specified."""
+        if self._availability_template is None:
+            return True
+        else:
+            self._availability_template.hass = self.hass
+            return self._availability_template.async_render()
 
     @property
     def name(self):
@@ -194,7 +264,17 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
         return self._name
 
     @property
-    def device_state_attributes(self):
+    def unique_id(self):
+        """Return the unique id."""
+        return "cover_rf_timebased_uuid_" + self._unique_id
+
+    @property
+    def device_class(self):
+        """Return the device class of the cover."""
+        return self._device_class
+
+    @property
+    def extra_state_attributes(self):
         """Return the device state attributes."""
         attr = {}
         if self._travel_time_down is not None:
@@ -215,14 +295,12 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
     @property
     def is_opening(self):
         """Return if the cover is opening or not."""
-        from xknx.devices import TravelStatus
         return self.tc.is_traveling() and \
                self.tc.travel_direction == TravelStatus.DIRECTION_UP
 
     @property
     def is_closing(self):
         """Return if the cover is closing or not."""
-        from xknx.devices import TravelStatus
         return self.tc.is_traveling() and \
                self.tc.travel_direction == TravelStatus.DIRECTION_DOWN
 
@@ -264,7 +342,7 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
     async def async_stop_cover(self, **kwargs):
         """Turn the device stop."""
         _LOGGER.debug(self._name + ': ' + 'async_stop_cover')
-        self._handle_my_button()
+        self._handle_stop()
         await self._async_handle_command(SERVICE_STOP_COVER)
 
     async def set_position(self, position):
@@ -332,7 +410,7 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
         if action not in ["open","close","stop"]:
           raise ValueError("action must be one of open, close or stop.")
         if action == "stop":
-          self._handle_my_button()
+          self._handle_stop()
           return
         if action == "open":
           self.tc.start_travel_up()
@@ -350,7 +428,7 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
         if position_type not in [ATTR_POSITION_TYPE_TARGET, ATTR_POSITION_TYPE_CURRENT]:
           raise ValueError(ATTR_POSITION_TYPE + " must be one of %s, %s", ATTR_POSITION_TYPE_TARGET,ATTR_POSITION_TYPE_CURRENT)
         _LOGGER.debug(self._name + ': ' + 'set_known_position :: position  %d, confident %s, position_type %s, self.tc.is_traveling%s', position, str(confident), position_type, str(self.tc.is_traveling()))
-        self._assume_uncertain_position = not confident 
+        self._assume_uncertain_position = not confident if not self._always_confident else False
         self._processing_known_position = True
         if position_type == ATTR_POSITION_TYPE_TARGET:
           self._target_position = position
@@ -384,24 +462,32 @@ class CoverTimeBased(CoverEntity, RestoreEntity):
 
     async def _async_handle_command(self, command, *args):
         """We have cover.* triggered command. Reset assumed state and known_position processsing and execute"""
-        self._assume_uncertain_position = True
+        self._assume_uncertain_position = not self._always_confident
         self._processing_known_position = False
+        cmd = "UNKNOWN"
         if command == "close_cover":
             cmd = "DOWN"
             self._state = False
-            await self.hass.services.async_call("homeassistant", "turn_on", {"entity_id": self._close_script_entity_id}, False)
-
+            if self._cover_entity_id is not None:
+                await self.hass.services.async_call("cover", "close_cover", {"entity_id": self._cover_entity_id}, False)
+            else:
+                await self.hass.services.async_call("homeassistant", "turn_on", {"entity_id": self._close_script_entity_id}, False)
         elif command == "open_cover":
             cmd = "UP"
             self._state = True
-            await self.hass.services.async_call("homeassistant", "turn_on", {"entity_id": self._open_script_entity_id}, False)
-
+            if self._cover_entity_id is not None:
+                await self.hass.services.async_call("cover", "open_cover", {"entity_id": self._cover_entity_id}, False)
+            else:
+                await self.hass.services.async_call("homeassistant", "turn_on", {"entity_id": self._open_script_entity_id}, False)
         elif command == "stop_cover":
             cmd = "STOP"
             self._state = True
-            await self.hass.services.async_call("homeassistant", "turn_on", {"entity_id": self._stop_script_entity_id}, False)
+            if self._cover_entity_id is not None:
+                await self.hass.services.async_call("cover", "stop_cover", {"entity_id": self._cover_entity_id}, False)
+            else:
+                await self.hass.services.async_call("homeassistant", "turn_on", {"entity_id": self._stop_script_entity_id}, False)
 
         _LOGGER.debug(self._name + ': ' + '_async_handle_command :: %s', cmd)
-        
+
         # Update state of entity
         self.async_write_ha_state()
