@@ -2,13 +2,13 @@
 
 A fork with added `invert_knx_open_close` option to set open/close percentage per your personal preference.
 
-# Cover Time Based script/entity
+# Cover Time Based RF
 
 Cover Time Based Component for your [Home-Assistant](http://www.home-assistant.io) based on [davidramosweb's Cover Time Based Component](https://github.com/davidramosweb/home-assistant-custom-components-cover-time-based), modified for native cover entities, covers triggered by RF commands, or any other unidirectional methods.
 
 **Note**: _Since ESPHome v1.15.0 (September 13, 2020) it is possible to implement a Time Based Cover entirely in the Sonoff RF Bridge hardware, which excludes the necessity of this component (at least of the RF part). Jump to the bottom of this readme for an example how to set it up._
 
-With this component you can add a time-based cover. You either have to set triggering scripts to open, close and stop the cover or you can use an existing cover entity provided by another integration which does not have timing or status feedback. Position is calculated based on the fraction of time spent by the cover travelling up or down. You can set position from within Home Assistant using service calls. When you use this component, you can forget about the cover's original remote controllers or switches, because there's no feedback from the cover about its real state, state is assumed based on the last command sent from Home Assistant. There's also a custom service available where you can update the real state of the cover based on external sensors if you want to.
+With this component you can add a time-based cover. You either have to set triggering scripts to open, close and stop the cover or you can use an existing cover entity provided by another integration which does not have timing or status feedback. Position is calculated based on the fraction of time spent by the cover traveling up or down. You can set position from within Home Assistant using service calls. When you use this component, you can forget about the cover's original remote controllers or switches, because there's no feedback from the cover about its real state, state is assumed based on the last command sent from Home Assistant. There's also a custom service available where you can update the real state of the cover based on external sensors if you want to.
 
 You can adapt it to your requirements, actually any cover system could be used which uses 3 triggers: up, stop, down. The idea is to embed your triggers into scripts which can be hooked into this component via config. For example, you can use RF-bridge or dual-gang switch running Tasmota or ESPHome firmware integrated like in the examples shown below.
 
@@ -72,7 +72,7 @@ Optional settings:
 - `send_stop_at_ends` defaults to `False`. If set to `True`, the Stop script will be run after the cover reaches to 0 or 100 (closes or opens completely). This is for people who use interlocked relays in the scripts to drive the covers, which need to be released when the covers reach the end positions.
 - `invert_knx_open_close` defaults to `True`. If set to `False` it will follow KNX inverted open close values: `0` meaning open and `100` meaning closed. Otherwise open/close values will follow HA Cover Template: `0` (closed) and `100` (open) 
 - `always_confident` defaults to `False`. If set to `True`, the calculated state will always be assumed to be accurate. This mainly affects UI components - for example, if the cover is fully opened, the open button will be disabled. Make sure to [set](#cover_rf_time_basedset_known_position) the current state after first setup and only use this entity to control the covers. Not recommended to be `True` for RF-based covers.
-- `device_class` defaults to `shutter` if not specified. See the docs for availale [cover device classes](http://dev-docs.home-assistant.io/en/master/api/components.html#homeassistant.components.cover.CoverDeviceClass).
+- `device_class` defaults to `shutter` if not specified. See the docs for available [cover device classes](http://dev-docs.home-assistant.io/en/master/api/components.html#homeassistant.components.cover.CoverDeviceClass).
 - `availability_template` if not specified will make the cover always available. You can use a template returning `True` or `False` in order to toggle availability of the cover based on other entities. Useful to link with the connection status of your RF Bridge or relays device.
 
 ### Example scripts.yaml entry
@@ -135,7 +135,7 @@ The following example assumes that you're using an RF bridge running [Tasmota](h
 
 Note that for RAW data you also need the [Portisch firmware](https://github.com/Portisch/RF-Bridge-EFM8BB1/wiki) to be flashed on the EFM8BB1 embedded RF-transmitter chip of the bridge unit.
   
-For the scripts above with Tasmota you need a small automation in **automations.yaml** to set `RfRaw` back to `0` to avoid spamming your MQTT server with loads of sniffed raw RF data. This trigger is checked every minute only so set `> 40` set in the `value_template` to be a bit bigger than your biggest `travelling_time`:
+For the scripts above with Tasmota you need a small automation in **automations.yaml** to set `RfRaw` back to `0` to avoid spamming your MQTT server with loads of sniffed raw RF data. This trigger is checked every minute only so set `> 40` set in the `value_template` to be a bit bigger than your biggest `traveling_time`:
 
 ```yaml
 - id: rf_transmitter_tasmota_cancel_sniff
@@ -194,7 +194,7 @@ The example below assumes you've set `send_stop_at_ends: True` in the cover conf
         topic: 'cmnd/myroomcoverswitch/POWER2' # power
         payload: 'ON'
 ```
-Note how you don't have to configure these as switches in Home Assistant at all, it's enough just to publish MQTT commands strainght from the script (credits to [VDRainer](https://github.com/VDRainer) for this example).
+Note how you don't have to configure these as switches in Home Assistant at all, it's enough just to publish MQTT commands straight from the script (credits to [VDRainer](https://github.com/VDRainer) for this example).
 Of course you can customize based on what ever other way to trigger these 3 type of movements. You could, for example, turn on and off warning lights along with the movement.
 
 ### Services to set position or action without triggering cover movement
@@ -209,7 +209,7 @@ This component provides 2 services:
 
 In addition to ```entity_id``` and ```position``` takes 2 optional parameters:
 * ```confident``` that affects how the cover is presented in HA. Setting confident to ```true``` will mean that certain button operations aren't permitted.
-* ```position_type``` allows the setting of either the ```target``` or ```current``` posistion.
+* ```position_type``` allows the setting of either the ```target``` or ```current``` position.
 
 Following examples to help explain parameters and use cases:
 
@@ -233,10 +233,10 @@ Following examples to help explain parameters and use cases:
 ``` 
 
 We have set ```confident``` to ```true``` as the sensor has confirmed a final position. The down arrow is now no longer available in default  HA frontend when the cover is closed. 
-```position_type``` of ```current``` means the current position is moved immediately to 0 and stops there (provided cover is not moving, otherwise will contiune moving to original target). 
+```position_type``` of ```current``` means the current position is moved immediately to 0 and stops there (provided cover is not moving, otherwise will continue moving to original target). 
 
 
-2.  This example uses ```position_type: target``` (the default) and ```confident: false``` (also default) where an RF bridge has interecepted an RF command, so we know an external remote has triggered cover opening action:
+2.  This example uses ```position_type: target``` (the default) and ```confident: false``` (also default) where an RF bridge has intercepted an RF command, so we know an external remote has triggered cover opening action:
 
 ```yaml
 - id: 'rf_cover_opening'
@@ -260,7 +260,7 @@ We have set ```confident``` to ```true``` as the sensor has confirmed a final po
 ```position_type``` is omitted so defaulted to ```target```, meaning cover will transition to ```position``` without triggering any start or stop actions.
 
 #### ```cover_rf_time_based.set_known_action```
-This service mimics cover movement in Home Assistant without actually sending out commands to the cover. It can be used for example when external RF remote controllers act on the cover directly, but the signals can be captured with an RF brigde and Home Assistant can play the movement in parrallel with the real cover. In addtion to ```entity_id``` takes parameter ```action``` that should be one of open, close or stop.
+This service mimics cover movement in Home Assistant without actually sending out commands to the cover. It can be used for example when external RF remote controllers act on the cover directly, but the signals can be captured with an RF bridge and Home Assistant can play the movement in parallel with the real cover. In addition to ```entity_id``` takes parameter ```action``` that should be one of open, close or stop.
 
 Example:
 
@@ -303,15 +303,15 @@ More details in [Home Assistant device class docs](https://www.home-assistant.io
 
 #### When using this component with Tasmota RF Bridge in automations
 
-Since there's no feedback from the cover about its current state, state is assumed based on the last command sent, and position is calculated based on the fraction of time spent travelling up or down. You need to measure time by opening/closing the cover using the original remote controller, not through the commands sent from Home Assistant (as they may introduce some delay).
+Since there's no feedback from the cover about its current state, state is assumed based on the last command sent, and position is calculated based on the fraction of time spent traveling up or down. You need to measure time by opening/closing the cover using the original remote controller, not through the commands sent from Home Assistant (as they may introduce some delay).
 
-Tasmota RF bridge is able to send out the radio-frequency commands very quickly. If some of your covers 'miss' the commands occassionally (you can see that from the fact that the state shown in Home Assistant does not correspond to reality), it may be that those cover motors do not understand the codes when they are sent 'at once' from Home Assistant. 
+Tasmota RF bridge is able to send out the radio-frequency commands very quickly. If some of your covers 'miss' the commands occasionally (you can see that from the fact that the state shown in Home Assistant does not correspond to reality), it may be that those cover motors do not understand the codes when they are sent 'at once' from Home Assistant. 
 
 This can be handled in multiple ways:
 - try increasing your RF range. Make sure the wire antennas of the covers are not tied close to the power cables or to big metallic surfaces. For 433MHz, the antenna length should be around 17cm (this may include the part going inside the tube motor). Sonoff RF Bridge has two copper helical antennas near the PCB, you can unsolder them and simply solder in place two straight hard wires of 17.3cm, which can go out through some small holes on the sides of the unit. You need to solder only one end of each wire, to the points where the helical legs were shorter (points U7 and U8). This will increase the range substantially, to the cost of aesthetics.
 - avoid _backlogs_ with `rfraw AAB0XXXXX....XXXXXXXXXX; rfraw 0` if you need multiple covers opening and closing at once. Switching the sniff on and off quickly for every cover movement may cause issues. It's enough to send `rfraw 0` only once with some delay after all procedures related to cover movements finished, the example scripts above take care of that.
-- if you are sending `0xB0` codes (decoded with [BitBucketConverter.py](https://github.com/Portisch/RF-Bridge-EFM8BB1)) you can tweak those to be sent with repetitions (multiple times) by changing the repetition parameter (5th byte) of the code. [For example](https://github.com/arendst/Tasmota/issues/5936#issuecomment-500236581) 20 repetitions can be achieved by changing 5th byte from 04 to 14. Also BitBucketConverter can be run by specifiying the required repetitions at command line before decoding. Some covers might not like this, though.
-- alternatively, you can further reduce stress by making sure you don't use [cover groups](https://www.home-assistant.io/integrations/cover.group/) containing multiple covers provided by this integration, and also in automation don't include multipe covers separated by commas in one service call. You could create separate service calls for each cover, moreover, add more delay between them:
+- if you are sending `0xB0` codes (decoded with [BitBucketConverter.py](https://github.com/Portisch/RF-Bridge-EFM8BB1)) you can tweak those to be sent with repetitions (multiple times) by changing the repetition parameter (5th byte) of the code. [For example](https://github.com/arendst/Tasmota/issues/5936#issuecomment-500236581) 20 repetitions can be achieved by changing 5th byte from 04 to 14. Also BitBucketConverter can be run by specifying the required repetitions at command line before decoding. Some covers might not like this, though.
+- alternatively, you can further reduce stress by making sure you don't use [cover groups](https://www.home-assistant.io/integrations/cover.group/) containing multiple covers provided by this integration, and also in automation don't include multiple covers separated by commas in one service call. You could create separate service calls for each cover, moreover, add more delay between them:
 ```yaml
 - alias: 'Covers down when getting dark'
   mode: single
