@@ -1,5 +1,5 @@
 {
-  "name": "Cover Time Based (script/entity)",
+  "name": "Cover Time Based RF (fork with invert_knx_open_close option)",
   "content_in_root": false,
   "render_readme": false,
   "domains": ["cover"],
