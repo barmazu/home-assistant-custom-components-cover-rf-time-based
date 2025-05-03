@@ -1,7 +1,7 @@
 {
   "domain": "cover_rf_time_based",
   "name": "Cover Time Based RF (fork with invert_knx_open_close option)",
-  "version": "2.1.0",
+  "version": "2.1.3",
   "documentation": "https://github.com/barmazu/home-assistant-custom-components-cover-rf-time-based",
   "iot_class": "assumed_state",
   "requirements": [

@@ -103,22 +103,18 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     }
 )
 
-POSITION_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
-        vol.Required(ATTR_POSITION): cv.positive_int,
-        vol.Optional(ATTR_CONFIDENT, default=False): cv.boolean,
-        vol.Optional(ATTR_POSITION_TYPE, default=ATTR_POSITION_TYPE_TARGET): cv.string
-    }
-)
+POSITION_SCHEMA = {
+    vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+    vol.Required(ATTR_POSITION): cv.positive_int,
+    vol.Optional(ATTR_CONFIDENT, default=False): cv.boolean,
+    vol.Optional(ATTR_POSITION_TYPE, default=ATTR_POSITION_TYPE_TARGET): cv.string
+}
 
 
-ACTION_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
-        vol.Required(ATTR_ACTION): cv.string
-    }
-)
+ACTION_SCHEMA = {
+    vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+    vol.Required(ATTR_ACTION): cv.string
+}
 
 
 DOMAIN = "cover_rf_time_based"
